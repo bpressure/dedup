@@ -14,11 +14,11 @@
       {
         packages.default = pkgs.buildGoModule {
           pname = "dedup";
-          version = "0.0.0-src";
+          version = "0.5.0";
           
           src = ./.;
           
-          vendorHash = "sha256-aiUoM952HP3RWy9O/vcCftFlj7tt7PE5SddfEtI7vIc=";
+          vendorHash = "sha256-urKK/87xaDc407HVoYGJoWalnKWNhPf5nF2ybC9gdBQ=";
           
           ldflags = [ "-s" "-w" "-X main.version=${self.packages.${system}.default.version}" ];
           

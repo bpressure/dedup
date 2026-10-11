@@ -16,13 +16,14 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/jpillora/ansi"
 	"github.com/jpillora/opts"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
-const version = "0.0.0-src" //set via ldflags
+var version = "0.5.0" //set via ldflags
 
 var (
 	//config
@@ -43,7 +44,7 @@ var (
 	sep = string(filepath.Separator)
 	//indexMut guards index
 	indexMut = sync.Mutex{}
-	index    = map[string]string{}
+	index    = map[string]*indexEntry{}
 	//stats
 	hashed  = uint64(0)
 	deletes = uint64(0)
@@ -158,34 +159,28 @@ func scan(dst, src string, inputDirs []string) {
 		//normal file, hash!
 		hex := hashFile(path)
 		atomic.AddUint64(&hashed, 1)
-		//if already exists? delete!
+		//lookup, decide and update atomically
 		indexMut.Lock()
-		existPath, exists := index[hex]
-		indexMut.Unlock()
+		defer indexMut.Unlock()
+		existing, exists := index[hex]
 		if exists {
-			if path == existPath {
+			if path == existing.path {
 				return //already scanned
 			}
-			if !config.Keep {
-				if config.Verbose {
-					t, del, exi := trimPathPrefix(path, existPath)
-					if t == "" {
-						printf("Removing %s dupe-of %s", red(del), blue(exi))
-					} else {
-						printf("Removing %s/{%s dupe-of %s}", grey(t), red(del), blue(exi))
-					}
+			//files from earlier input dirs always win, otherwise
+			//keep the preferred one of the two (see keepFirst)
+			if config.Keep || existing.src != src || !keepFirst(path, existing.path) {
+				if !config.Keep {
+					removeDupe(path, path, existing.path)
 				}
-				if !config.Dryrun {
-					check(os.Remove(path))
-				}
-				atomic.AddUint64(&deletes, 1)
+				return
 			}
-			return
+			//this file wins, delete the previously indexed one
+			removeDupe(existing.current, existing.path, path)
 		}
-		//file is unqiue! place in the index
-		indexMut.Lock()
-		index[hex] = path
-		indexMut.Unlock()
+		//file is unqiue (or replaces a dupe)! place in the index
+		entry := &indexEntry{src: src, path: path, current: path}
+		index[hex] = entry
 		//merge unique files into first directory?
 		if noMerge {
 			return
@@ -216,12 +211,55 @@ func scan(dst, src string, inputDirs []string) {
 		if !config.Dryrun {
 			check(os.Rename(path, dstpath))
 		}
+		entry.current = dstpath
 		atomic.AddUint64(&moves, 1)
 	})
 	//initial item
 	queue.en([]string{src})
 	//wait for queue to empty
 	queue.wait()
+}
+
+//indexEntry is the kept file for a given hash
+type indexEntry struct {
+	src     string //input directory the file was found in
+	path    string //path where the file was found
+	current string //path where the file is now (differs after a merge move)
+}
+
+//keepFirst reports whether file a should be kept over its duplicate b
+//(both from the same input directory):
+//  1. the file in the deeper subfolder is kept
+//  2. in the same directory, the file with the longer name is kept
+//  3. otherwise, the lexicographically smaller path is kept
+func keepFirst(a, b string) bool {
+	if da, db := strings.Count(a, sep), strings.Count(b, sep); da != db {
+		return da > db
+	}
+	if filepath.Dir(a) == filepath.Dir(b) {
+		la := utf8.RuneCountInString(filepath.Base(a))
+		lb := utf8.RuneCountInString(filepath.Base(b))
+		if la != lb {
+			return la > lb
+		}
+	}
+	return a < b
+}
+
+//removeDupe deletes the file at del (found at delPath), a dupe-of exiPath
+func removeDupe(del, delPath, exiPath string) {
+	if config.Verbose {
+		t, d, e := trimPathPrefix(delPath, exiPath)
+		if t == "" {
+			printf("Removing %s dupe-of %s", red(d), blue(e))
+		} else {
+			printf("Removing %s/{%s dupe-of %s}", grey(t), red(d), blue(e))
+		}
+	}
+	if !config.Dryrun {
+		check(os.Remove(del))
+	}
+	atomic.AddUint64(&deletes, 1)
 }
 
 type queue struct {

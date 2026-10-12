@@ -23,7 +23,7 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 )
 
-var version = "0.5.0" //set via ldflags
+var version = "0.6.0" //set via ldflags
 
 var (
 	//config
@@ -34,11 +34,11 @@ var (
 		Verbose     bool     `help:"verbose logs (displays each move and delete)"`
 		Dryrun      bool     `help:"runs exactly as configured, except no changes are made"`
 		Workers     int      `help:"number of worker threads"`
-		Hash        string   `help:"hashing algorithm to use" default:"md5, can also choose sha1 and sha256"`
+		Hash        string   `help:"hashing algorithm to use (sha256, md5 or sha1)"`
 		Directories []string `type:"arg" min:"1"`
 	}{
 		Workers: runtime.NumCPU(),
-		Hash:    "md5",
+		Hash:    "sha256",
 	}
 	//path separator
 	sep = string(filepath.Separator)
@@ -379,7 +379,7 @@ type hashFactory func() hash.Hash
 
 var newHash hashFactory
 
-//hash the file at path to an sha1 hex string
+//hash the file at path to a hex string (using the selected algorithm)
 func hashFile(p string) string {
 	f, err := os.Open(p)
 	check(err, p)
